@@ -15,8 +15,6 @@ static CGFloat const kPageControlHeight = 35;
 static CGFloat const kSkipButtonWidth = 100;
 static CGFloat const kSkipButtonHeight = 44;
 static CGFloat const kBackgroundMaskAlpha = 0.6;
-static CGFloat const kDefaultBlurRadius = 20;
-static CGFloat const kDefaultSaturationDeltaFactor = 1.8;
 
 static NSString * const kSkipButtonText = @"Skip";
 
@@ -27,6 +25,9 @@ static NSString * const kSkipButtonText = @"Skip";
 @property (nonatomic, strong) OnboardingContentViewController *upcomingPage;
 
 @property (nonatomic, strong) UIPageViewController *pageVC;
+@property (nonatomic, weak) UIImageView *backgroundImageView;
+@property (nonatomic, weak) UIView *backgroundMaskView;
+@property (nonatomic, strong) UIVisualEffectView *blurEffectView;
 @property (nonatomic, strong) AVPlayer *player;
 @property (nonatomic, strong) NSURL *videoURL;
 
@@ -142,10 +143,13 @@ static NSString * const kSkipButtonText = @"Skip";
 
 - (void)viewWillLayoutSubviews {
     [super viewWillLayoutSubviews];
-    self.pageVC.view.frame = self.view.frame;
-    self.moviePlayerController.view.frame = self.view.frame;
-    self.skipButton.frame = CGRectMake(CGRectGetMaxX(self.view.frame) - kSkipButtonWidth, CGRectGetMaxY(self.view.frame) - self.underPageControlPadding - kSkipButtonHeight, kSkipButtonWidth, kSkipButtonHeight);
-    self.pageControl.frame = CGRectMake(0, CGRectGetMaxY(self.view.frame) - self.underPageControlPadding - kPageControlHeight, self.view.frame.size.width, kPageControlHeight);
+    self.pageVC.view.frame = self.view.bounds;
+    self.moviePlayerController.view.frame = self.view.bounds;
+    self.skipButton.frame = CGRectMake(CGRectGetMaxX(self.view.bounds) - kSkipButtonWidth, CGRectGetMaxY(self.view.bounds) - self.underPageControlPadding - kSkipButtonHeight, kSkipButtonWidth, kSkipButtonHeight);
+    self.pageControl.frame = CGRectMake(0, CGRectGetMaxY(self.view.bounds) - self.underPageControlPadding - kPageControlHeight, self.view.bounds.size.width, kPageControlHeight);
+    self.backgroundImageView.frame = self.view.bounds;
+    self.backgroundMaskView.frame = self.pageVC.view.frame;
+    self.blurEffectView.frame = self.view.bounds;
 }
 
 - (void)generateView {
@@ -155,29 +159,36 @@ static NSString * const kSkipButtonText = @"Skip";
     self.pageVC.delegate = self;
     self.pageVC.dataSource = self.swipingEnabled ? self : nil;
     
-    if (self.shouldBlurBackground) {
-        [self blurBackground];
-    }
-    
-    UIImageView *backgroundImageView;
-    
     // create the background image view and set it to aspect fill so it isn't skewed
     if (self.backgroundImage) {
-        backgroundImageView = [[UIImageView alloc] initWithFrame:self.view.bounds];
-        backgroundImageView.clipsToBounds = YES;
-        backgroundImageView.contentMode = UIViewContentModeScaleAspectFill;
-        [backgroundImageView setImage:self.backgroundImage];
-        [self.view addSubview:backgroundImageView];
+        if (!_backgroundImageView) {
+            UIImageView *backgroundImageView;
+            backgroundImageView = [[UIImageView alloc] initWithFrame:CGRectZero];
+            backgroundImageView.clipsToBounds = YES;
+            backgroundImageView.contentMode = UIViewContentModeScaleAspectFit;
+            [self.view addSubview:backgroundImageView];
+//            backgroundImageView.alpha = 0.5f;
+            _backgroundImageView = backgroundImageView;
+        }
+        [self.backgroundImageView setImage:self.backgroundImage];
+    }else{
+        [self.backgroundImageView removeFromSuperview];
+        self.backgroundImageView = nil;
     }
     
     // as long as the shouldMaskBackground setting hasn't been set to NO, we want to
     // create a partially opaque view and add it on top of the image view, so that it
     // darkens it a bit for better contrast
-    UIView *backgroundMaskView;
     if (self.shouldMaskBackground) {
-        backgroundMaskView = [[UIView alloc] initWithFrame:self.pageVC.view.frame];
-        backgroundMaskView.backgroundColor = [UIColor colorWithWhite:0.0 alpha:kBackgroundMaskAlpha];
-        [self.pageVC.view addSubview:backgroundMaskView];
+        if (!_backgroundMaskView) {
+            UIView *backgroundMaskView = [[UIView alloc] initWithFrame:self.pageVC.view.frame];
+            backgroundMaskView.backgroundColor = [UIColor colorWithWhite:0.0 alpha:kBackgroundMaskAlpha];
+            [self.pageVC.view addSubview:backgroundMaskView];
+            _backgroundMaskView = backgroundMaskView;
+        }
+    }else{
+        [self.backgroundMaskView removeFromSuperview];
+        self.backgroundMaskView = nil;
     }
 
     // set ourself as the delegate on all of the content views, to handle fading
@@ -195,11 +206,11 @@ static NSString * const kSkipButtonText = @"Skip";
     [self addChildViewController:self.pageVC];
     [self.view addSubview:self.pageVC.view];
     [self.pageVC didMoveToParentViewController:self];
-    [self.pageVC.view sendSubviewToBack:backgroundMaskView];
+    [self.pageVC.view sendSubviewToBack:self.backgroundMaskView];
     
     // send the background image view to the back if we have one
-    if (backgroundImageView) {
-        [self.pageVC.view sendSubviewToBack:backgroundImageView];
+    if (self.backgroundImageView) {
+        [self.pageVC.view sendSubviewToBack:self.backgroundImageView];
     }
     
     // otherwise send the video view to the back if we have one
@@ -214,12 +225,26 @@ static NSString * const kSkipButtonText = @"Skip";
         [self.pageVC.view sendSubviewToBack:self.moviePlayerController.view];
     }
     
-    // create the page control
+    // create and configure the page control
     [self.view addSubview:self.pageControl];
     
     // if we allow skipping, setup the skip button
     if (self.allowSkipping) {
         [self.view addSubview:self.skipButton];
+    }
+    
+    if (self.shouldBlurBackground && !UIAccessibilityIsReduceTransparencyEnabled()) {
+        if (!_blurEffectView) {
+            UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleExtraLight];
+            UIVisualEffectView *blurEffectView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
+            blurEffectView.alpha = 0.65f;
+//            [self.view addSubview:blurEffectView];
+            [self.view insertSubview:blurEffectView belowSubview:self.pageVC.view];
+            _blurEffectView = blurEffectView;
+        }
+    }else{
+        [self.blurEffectView removeFromSuperview];
+        self.blurEffectView = nil;
     }
     
     // if we want to fade the transitions, we need to tap into the underlying scrollview
@@ -238,7 +263,9 @@ static NSString * const kSkipButtonText = @"Skip";
 #pragma mark - Skipping
 
 - (void)handleSkipButtonPressed {
+    NSLog(@"%s, %@", __FUNCTION__, self.skipHandler ? @"exists" : @"not exists");
     if (self.skipHandler) {
+        NSLog(@"1");
         self.skipHandler();
     }
 }
@@ -462,134 +489,6 @@ static NSString * const kSkipButtonText = @"Skip";
             self.skipButton.alpha = percentComplete;
         }
     }
-}
-
-
-#pragma mark - Image blurring
-
-- (void)blurBackground {
-    // Check pre-conditions.
-    if (self.backgroundImage.size.width < 1 || self.backgroundImage.size.height < 1) {
-        NSLog (@"*** error: invalid size: (%.2f x %.2f). Both dimensions must be >= 1: %@", self.backgroundImage.size.width, self.backgroundImage.size.height, self.backgroundImage);
-        return;
-    }
-    if (!self.backgroundImage.CGImage) {
-        NSLog (@"*** error: image must be backed by a CGImage: %@", self.backgroundImage);
-        return;
-    }
-    
-    UIColor *tintColor = [UIColor colorWithWhite:0.7 alpha:0.3];
-    CGFloat blurRadius = kDefaultBlurRadius;
-    CGFloat saturationDeltaFactor = kDefaultSaturationDeltaFactor;
-    CGRect imageRect = { CGPointZero, self.backgroundImage.size };
-    UIImage *effectImage = self.backgroundImage;
-    
-    BOOL hasBlur = blurRadius > __FLT_EPSILON__;
-    BOOL hasSaturationChange = fabs(saturationDeltaFactor - 1.) > __FLT_EPSILON__;
-    if (hasBlur || hasSaturationChange) {
-        UIGraphicsBeginImageContextWithOptions(self.backgroundImage.size, NO, [[UIScreen mainScreen] scale]);
-        CGContextRef effectInContext = UIGraphicsGetCurrentContext();
-        CGContextScaleCTM(effectInContext, 1.0, -1.0);
-        CGContextTranslateCTM(effectInContext, 0, -self.backgroundImage.size.height);
-        CGContextDrawImage(effectInContext, imageRect, self.backgroundImage.CGImage);
-        
-        vImage_Buffer effectInBuffer;
-        effectInBuffer.data     = CGBitmapContextGetData(effectInContext);
-        effectInBuffer.width    = CGBitmapContextGetWidth(effectInContext);
-        effectInBuffer.height   = CGBitmapContextGetHeight(effectInContext);
-        effectInBuffer.rowBytes = CGBitmapContextGetBytesPerRow(effectInContext);
-        
-        UIGraphicsBeginImageContextWithOptions(self.backgroundImage.size, NO, [[UIScreen mainScreen] scale]);
-        CGContextRef effectOutContext = UIGraphicsGetCurrentContext();
-        vImage_Buffer effectOutBuffer;
-        effectOutBuffer.data     = CGBitmapContextGetData(effectOutContext);
-        effectOutBuffer.width    = CGBitmapContextGetWidth(effectOutContext);
-        effectOutBuffer.height   = CGBitmapContextGetHeight(effectOutContext);
-        effectOutBuffer.rowBytes = CGBitmapContextGetBytesPerRow(effectOutContext);
-        
-        if (hasBlur) {
-            // A description of how to compute the box kernel width from the Gaussian
-            // radius (aka standard deviation) appears in the SVG spec:
-            // http://www.w3.org/TR/SVG/filters.html#feGaussianBlurElement
-            //
-            // For larger values of 's' (s >= 2.0), an approximation can be used: Three
-            // successive box-blurs build a piece-wise quadratic convolution kernel, which
-            // approximates the Gaussian kernel to within roughly 3%.
-            //
-            // let d = floor(s * 3*sqrt(2*pi)/4 + 0.5)
-            //
-            // ... if d is odd, use three box-blurs of size 'd', centered on the output pixel.
-            //
-            CGFloat inputRadius = blurRadius * [[UIScreen mainScreen] scale];
-            unsigned int radius = floor(inputRadius * 3. * sqrt(2 * M_PI) / 4 + 0.5);
-            if (radius % 2 != 1) {
-                radius += 1; // force radius to be odd so that the three box-blur methodology works.
-            }
-            vImageBoxConvolve_ARGB8888(&effectInBuffer, &effectOutBuffer, NULL, 0, 0, radius, radius, 0, kvImageEdgeExtend);
-            vImageBoxConvolve_ARGB8888(&effectOutBuffer, &effectInBuffer, NULL, 0, 0, radius, radius, 0, kvImageEdgeExtend);
-            vImageBoxConvolve_ARGB8888(&effectInBuffer, &effectOutBuffer, NULL, 0, 0, radius, radius, 0, kvImageEdgeExtend);
-        }
-        BOOL effectImageBuffersAreSwapped = NO;
-        if (hasSaturationChange) {
-            CGFloat s = saturationDeltaFactor;
-            CGFloat floatingPointSaturationMatrix[] = {
-                0.0722 + 0.9278 * s,  0.0722 - 0.0722 * s,  0.0722 - 0.0722 * s,  0,
-                0.7152 - 0.7152 * s,  0.7152 + 0.2848 * s,  0.7152 - 0.7152 * s,  0,
-                0.2126 - 0.2126 * s,  0.2126 - 0.2126 * s,  0.2126 + 0.7873 * s,  0,
-                0,                    0,                    0,  1,
-            };
-            const int32_t divisor = 256;
-            NSUInteger matrixSize = sizeof(floatingPointSaturationMatrix)/sizeof(floatingPointSaturationMatrix[0]);
-            int16_t saturationMatrix[matrixSize];
-            for (NSUInteger i = 0; i < matrixSize; ++i) {
-                saturationMatrix[i] = (int16_t)roundf(floatingPointSaturationMatrix[i] * divisor);
-            }
-            if (hasBlur) {
-                vImageMatrixMultiply_ARGB8888(&effectOutBuffer, &effectInBuffer, saturationMatrix, divisor, NULL, NULL, kvImageNoFlags);
-                effectImageBuffersAreSwapped = YES;
-            }
-            else {
-                vImageMatrixMultiply_ARGB8888(&effectInBuffer, &effectOutBuffer, saturationMatrix, divisor, NULL, NULL, kvImageNoFlags);
-            }
-        }
-        if (!effectImageBuffersAreSwapped)
-            effectImage = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
-        
-        if (effectImageBuffersAreSwapped)
-            effectImage = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
-    }
-    
-    // Set up output context.
-    UIGraphicsBeginImageContextWithOptions(self.backgroundImage.size, NO, [[UIScreen mainScreen] scale]);
-    CGContextRef outputContext = UIGraphicsGetCurrentContext();
-    CGContextScaleCTM(outputContext, 1.0, -1.0);
-    CGContextTranslateCTM(outputContext, 0, -self.backgroundImage.size.height);
-    
-    // Draw base image.
-    CGContextDrawImage(outputContext, imageRect, self.backgroundImage.CGImage);
-    
-    // Draw effect image.
-    if (hasBlur) {
-        CGContextSaveGState(outputContext);
-        CGContextDrawImage(outputContext, imageRect, effectImage.CGImage);
-        CGContextRestoreGState(outputContext);
-    }
-    
-    // Add in color tint.
-    if (tintColor) {
-        CGContextSaveGState(outputContext);
-        CGContextSetFillColorWithColor(outputContext, tintColor.CGColor);
-        CGContextFillRect(outputContext, imageRect);
-        CGContextRestoreGState(outputContext);
-    }
-    
-    // Output image is ready.
-    UIImage *outputImage = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    
-    self.backgroundImage = outputImage;
 }
 
 @end

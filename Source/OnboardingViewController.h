@@ -10,7 +10,16 @@
 #import "OnboardingContentViewController.h"
 @import AVKit;
 
+// Optional block used to configure a button.
+//typedef id   (^OBButtonConfigurationBlock)  (UIButton *button);
+
 @interface OnboardingViewController : UIViewController <UIPageViewControllerDataSource, UIPageViewControllerDelegate, UIScrollViewDelegate, OnboardingContentViewControllerDelegate>
+
+/**
+ * Optional block to use to configure skip button.
+ * See block signature above.
+ */
+//@property (nullable, nonatomic, copy) OBButtonConfigurationBlock skipButtonConfigurationBlock;
 
 /**
  * @brief The onboarding content view controllers.
